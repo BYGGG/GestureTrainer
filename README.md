@@ -30,14 +30,14 @@ This software enables users to create, train, and deploy custom gesture recognit
 - Open `Project.mlapp` in MATLAB App Designer.  
 - Create a new project or load an existing one by entering the project name and selecting the folder.  
 
-![image](https://github.com/user-attachments/assets/5390bd1f-b948-4826-906e-804823d86d36)
+![image](https://github.com/user-attachments/assets/fb5a6d54-dff6-4fa1-a231-6f59f35fc8a2)
 
 3. **Overview**  
 - Once you click **Create/Load**, an Overview page appears.  
 - You can preprocess a new dataset or specify model configurations.  
 - If there are existing preprocessed datasets or configured models, you can select one and click **View** to see its details.  
 
-![image](https://github.com/user-attachments/assets/ae6a5b44-780a-4742-be57-be16a1b34a3d)
+![image](https://github.com/user-attachments/assets/51ec5f38-0b04-4722-ac83-c3d79ebd38d2)
 
 4. **Data Preprocessing**  
 - To preprocess a new dataset, select **Preprocess new dataset** in the Overview page.  
@@ -45,14 +45,14 @@ This software enables users to create, train, and deploy custom gesture recognit
 - Click the **Process** button (top right) to start preprocessing. Progress and errors will be shown in the MATLAB command window.  
 - **Important:** Remember to save the mean and standard deviation values printed in the command window for deployment use.  
 
-![image](https://github.com/user-attachments/assets/40bf7536-2a88-44e7-b597-a09d9546c983)
+![image](https://github.com/user-attachments/assets/85f62a5f-2f7f-417d-bb34-bf7ff35d56a9)
 
 5. **Model Specification**  
 - To specify a new model configuration, select **Specify new model** in the Overview page.  
 - Configure the model layers and relevant hyperparameters.  
 - Once you’ve decided on the configuration, click **Confirm** (top right).  
 
-![image](https://github.com/user-attachments/assets/b10a719f-7a8f-49da-89c1-37a231981fbe)
+![image](https://github.com/user-attachments/assets/a1b5ea92-2efa-449d-9edc-f06857daceea)
 
 6. **Train**  
 - Ensure you have selected both a preprocessed dataset and a specified model.  
@@ -60,7 +60,7 @@ This software enables users to create, train, and deploy custom gesture recognit
 - Training logs and performance plots will appear to help evaluate progress.  
 - If you’re unsatisfied with the model, you can delete it by clicking the **Abandon** button.  
 
-![image](https://github.com/user-attachments/assets/8d34cb55-72b7-49eb-b023-90061b49c1df)
+![image](https://github.com/user-attachments/assets/fcb2ef57-5f74-43ee-a39b-929552a02eb8)
 
 7. **Deploy**  
 - With a trained model, go to the **Deployment** page.
@@ -71,7 +71,7 @@ This software enables users to create, train, and deploy custom gesture recognit
 - Manually run the `model_conversion.py` script to convert the TensorFlow model into ONNX format.  
 - Once the ONNX model is in the `onnx` folder, clone the online inference repository for the gesture recognizer (see [WebXR-GestureDeploy](https://github.com/BYGGG/WebXR-GestureDeploy) and follow its steps to set up on-device inference.  
 
-![image](https://github.com/user-attachments/assets/568fdf85-61c1-4b58-ab2f-81d2014eed6a)
+![image](https://github.com/user-attachments/assets/75017498-6f18-4f86-a547-8160c966fac2)
 
 ## Known Issues
 1. **Export to ONNX**  
