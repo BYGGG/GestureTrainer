@@ -69,7 +69,7 @@ This software enables users to create, train, and deploy custom gesture recognit
 - **Note**: The export to ONNX functionality is currently incomplete, so you’ll need some manual steps to export the model.  
 - After clicking **Convert**, a TensorFlow model is saved in the `tf` folder of your project.  
 - Manually run the `model_conversion.py` script to convert the TensorFlow model into ONNX format.  
-- Once the ONNX model is in the `onnx` folder, clone the online inference repository for the gesture recognizer (see [LINK HERE]) and follow its steps to set up on-device inference.  
+- Once the ONNX model is in the `onnx` folder, clone the online inference repository for the gesture recognizer (see [WebXR-GestureDeploy](https://github.com/BYGGG/WebXR-GestureDeploy) and follow its steps to set up on-device inference.  
 
 ![image](https://github.com/user-attachments/assets/568fdf85-61c1-4b58-ab2f-81d2014eed6a)
 
