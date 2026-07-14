@@ -1,39 +1,48 @@
 import os
+import sys
+import argparse
+import importlib
+
 import tensorflow as tf
 import tf2onnx
-from t_seq_120 import load_model
 
-# If it's attention layer, then remember to remove the output_shape in model.py
-# If it's LSTM layer, then remember to change unroll to True in model.py
 
-# Recreate the exact same model, including its weights and the optimizer
-new_model = load_model()
+def parse_args():
+    p = argparse.ArgumentParser(description="Convert a MATLAB-exported TF model to ONNX.")
+    p.add_argument("--model-name", required=True,
+                   help="Name of the exported TF package/folder (matches trained_name).")
+    p.add_argument("--tf-dir", required=True,
+                   help="Folder containing the exported TF package.")
+    p.add_argument("--onnx-dir", required=True,
+                   help="Output folder for the .onnx file.")
+    p.add_argument("--window-size", type=int, default=60)
+    p.add_argument("--feature-size", type=int, default=350)
+    p.add_argument("--opset", type=int, default=13)
+    return p.parse_args()
 
-# Show the model architecture (optional)
-# new_model.summary()
 
-# Set the window_size and feature_size according to your model's input shape
-window_size = 120
-feature_size = 350
+def main():
+    args = parse_args()
 
-# Define the input signature
-spec = (tf.TensorSpec((None, window_size, feature_size), tf.float32, name="input"),)  # Works for transformer and CNN models
+    # Make the exported package importable, then load it by name
+    sys.path.insert(0, os.path.abspath(args.tf_dir))
+    model_module = importlib.import_module(args.model_name)
+    new_model = model_module.load_model()
 
-# Get the directory where the script is located
-current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Input signature (works for transformer and CNN models)
+    spec = (tf.TensorSpec((None, args.window_size, args.feature_size),
+                          tf.float32, name="input"),)
 
-# Get the parent directory of the script's directory
-parent_dir = os.path.dirname(current_dir)
+    os.makedirs(args.onnx_dir, exist_ok=True)
+    output_path = os.path.join(args.onnx_dir, args.model_name + ".onnx")
 
-# Define the 'onnx' folder path in the parent directory
-onnx_folder = os.path.join(parent_dir, 'onnx')
+    tf2onnx.convert.from_keras(new_model,
+                               input_signature=spec,
+                               opset=args.opset,
+                               output_path=output_path)
 
-# Create the 'onnx' folder in the parent directory if it does not exist
-if not os.path.exists(onnx_folder):
-    os.makedirs(onnx_folder)
+    print("ONNX model saved to:", output_path)
 
-onnx_file = 't_seq_120.onnx'
 
-# Define the output path for the ONNX model
-output_path = os.path.join(onnx_folder, onnx_file)
-onnx_model, _ = tf2onnx.convert.from_keras(new_model, input_signature=spec, opset=13, output_path=output_path)
+if __name__ == "__main__":
+    main()

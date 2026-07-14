@@ -34,88 +34,216 @@ function processDataset(selected_joints_option, data_augmentation_methods, train
     gesture_files = dir(fullfile(gesture_folder, '*.csv'));
     num_files = length(gesture_files);
     
-    % Precalculate the total number of labels based on ratio split
-    total_train_labels = 0;
-    total_val_labels = 0;
-    total_test_labels = 0;
-
-    % Group files by gesture class
-    gesture_class_map = containers.Map;
+    % =====================================================================
+    % Parse all filenames to extract class, id, and participant
+    % Expected format: {GestureClass}-id-{N}-participant-{N}.csv
+    % Splitting by '-' gives: {Class, 'id', N, 'participant', N}
+    % Note: multi-word classes like "Two hands scale" use spaces, not dashes
+    % =====================================================================
+    file_classes = cell(num_files, 1);
+    file_ids = cell(num_files, 1);
+    file_participants = cell(num_files, 1);
+    
     for i = 1:num_files
-        gesture_file = gesture_files(i).name;
-        parts = split(gesture_file, '-');
-        gesture_class = parts{2};
-        if isKey(gesture_class_map, gesture_class)
-            gesture_class_map(gesture_class) = [gesture_class_map(gesture_class), i];
-        else
-            gesture_class_map(gesture_class) = i;
+        [~, name, ~] = fileparts(gesture_files(i).name);
+        parts = split(name, '-');
+        file_classes{i} = parts{1};         % Gesture class
+        file_ids{i} = parts{3};             % ID number
+        file_participants{i} = parts{5};    % Participant number
+    end
+    
+    % Get unique classes and participants
+    unique_classes = unique(file_classes);
+    unique_participants = unique(file_participants);
+    num_classes_found = length(unique_classes);
+    num_participants = length(unique_participants);
+    
+    fprintf('Found %d classes: ', num_classes_found);
+    fprintf('%s ', unique_classes{:});
+    fprintf('\n');
+    fprintf('Found %d participants: ', num_participants);
+    fprintf('%s ', unique_participants{:});
+    fprintf('\n');
+    
+    % =====================================================================
+    % Determine split method from data_augmentation_methods parameter
+    %   'Method 1' = within-participant  (split samples per class x participant)
+    %   'Method 2' = across-participant  (split participants into disjoint sets)
+    % =====================================================================
+    if strcmp(data_augmentation_methods, 'Within Participant')
+        split_method = 'within';
+        fprintf('Split method: WITHIN-participant (every participant in all splits)\n');
+    elseif strcmp(data_augmentation_methods, 'Across Participant')
+        split_method = 'across';
+        fprintf('Split method: ACROSS-participant (disjoint participant sets)\n');
+    else
+        error('Invalid split method. Use ''Method 1'' (within-participant) or ''Method 2'' (across-participant).');
+    end
+    
+    % Convert ratios from /10 scale to fractions
+    train_frac = train_ratio / 10;
+    val_frac = val_ratio / 10;
+    test_frac = 1 - train_frac - val_frac;
+    
+    fprintf('Split ratio: %.0f%% train / %.0f%% val / %.0f%% test\n', ...
+        train_frac*100, val_frac*100, test_frac*100);
+    
+    % =====================================================================
+    % Assign files to train/val/test splits
+    % =====================================================================
+    % Each file gets assigned: 'train', 'val', or 'test'
+    file_split = cell(num_files, 1);
+    
+    if strcmp(split_method, 'within')
+        % ---- WITHIN-PARTICIPANT SPLIT ----
+        % For each unique (class, participant) group, split files at ratio
+        % Priority: test > val > train for small groups
+        
+        for c = 1:length(unique_classes)
+            for p = 1:length(unique_participants)
+                % Find file indices belonging to this (class, participant) group
+                mask = strcmp(file_classes, unique_classes{c}) & ...
+                       strcmp(file_participants, unique_participants{p});
+                group_indices = find(mask);
+                n = length(group_indices);
+                
+                if n == 0
+                    continue;
+                end
+                
+                % Shuffle
+                group_indices = group_indices(randperm(n));
+                
+                % Compute split counts with test-first priority
+                [n_test, n_val, n_train] = compute_split_counts(n, test_frac, val_frac);
+                
+                % Assign splits
+                for k = 1:n_test
+                    file_split{group_indices(k)} = 'test';
+                end
+                for k = (n_test+1):(n_test+n_val)
+                    file_split{group_indices(k)} = 'val';
+                end
+                for k = (n_test+n_val+1):n
+                    file_split{group_indices(k)} = 'train';
+                end
+            end
+        end
+        
+    else
+        % ---- ACROSS-PARTICIPANT SPLIT ----
+        % Split participants into disjoint train/val/test groups
+        % All data from a participant goes to exactly one split
+        
+        shuffled_participants = unique_participants(randperm(num_participants));
+        
+        % Compute participant split counts with test-first priority
+        [np_test, np_val, ~] = compute_split_counts(num_participants, test_frac, val_frac);
+        
+        test_participants = shuffled_participants(1:np_test);
+        val_participants = shuffled_participants(np_test+1:np_test+np_val);
+        train_participants = shuffled_participants(np_test+np_val+1:end);
+        
+        fprintf('  Train participants (%d): ', length(train_participants));
+        fprintf('%s ', train_participants{:});
+        fprintf('\n');
+        fprintf('  Val   participants (%d): ', length(val_participants));
+        fprintf('%s ', val_participants{:});
+        fprintf('\n');
+        fprintf('  Test  participants (%d): ', length(test_participants));
+        fprintf('%s ', test_participants{:});
+        fprintf('\n');
+        
+        % Assign each file based on its participant
+        for i = 1:num_files
+            if ismember(file_participants{i}, test_participants)
+                file_split{i} = 'test';
+            elseif ismember(file_participants{i}, val_participants)
+                file_split{i} = 'val';
+            else
+                file_split{i} = 'train';
+            end
         end
     end
-
-    gesture_classes = keys(gesture_class_map);
-    for c = 1:length(gesture_classes)
-        file_indices = gesture_class_map(gesture_classes{c});
-        num_class_files = length(file_indices);
-
-        % Calculate the number of files for train, validation, and test
-        num_train = round((train_ratio / 10) * num_class_files);
-        num_val = round((val_ratio / 10) * num_class_files);
-        num_test = num_class_files - num_train - num_val;
-
-        % Update the total labels count
-        total_train_labels = total_train_labels + num_train;
-        total_val_labels = total_val_labels + num_val;
-        total_test_labels = total_test_labels + num_test;
+    
+    % Collect indices per split
+    train_indices = find(strcmp(file_split, 'train'));
+    val_indices = find(strcmp(file_split, 'val'));
+    test_indices = find(strcmp(file_split, 'test'));
+    
+    total_train = length(train_indices);
+    total_val = length(val_indices);
+    total_test = length(test_indices);
+    
+    fprintf('\nSplit result: %d train, %d val, %d test (%d total)\n', ...
+        total_train, total_val, total_test, total_train + total_val + total_test);
+    
+    % Print per-class breakdown
+    fprintf('\nPer-class breakdown:\n');
+    fprintf('  %-25s %8s %8s %8s %8s\n', 'Class', 'Train', 'Val', 'Test', 'Total');
+    fprintf('  %s\n', repmat('-', 1, 57));
+    for c = 1:length(unique_classes)
+        cls = unique_classes{c};
+        n_tr = sum(strcmp(file_classes(train_indices), cls));
+        n_va = sum(strcmp(file_classes(val_indices), cls));
+        n_te = sum(strcmp(file_classes(test_indices), cls));
+        fprintf('  %-25s %8d %8d %8d %8d\n', cls, n_tr, n_va, n_te, n_tr+n_va+n_te);
     end
     
-    % Preallocate the size for labels
-    trainLabels = cell(total_train_labels, 1);
-    valLabels = cell(total_val_labels, 1);
-    testLabels = cell(total_test_labels, 1);
+    % =====================================================================
+    % Preallocate datasets
+    % =====================================================================
+    frame_size = calculate_frame_size(selected_joints, mode);
     
-    % Estimate frame data size for preallocation based on the first file
-    if num_files > 0
-        frame_size = calculate_frame_size(selected_joints, mode);
-        
-        % Preallocate space for train, val, and test datasets
-        trainData = zeros(window_size, frame_size, total_train_labels);
-        valData = zeros(window_size, frame_size, total_val_labels);
-        testData = zeros(window_size, frame_size, total_test_labels);
-    end
+    trainData = zeros(window_size, frame_size, total_train);
+    valData = zeros(window_size, frame_size, total_val);
+    testData = zeros(window_size, frame_size, total_test);
     
-    % Initialize label counts for adding processed data
-    trainLabelCount = 0;
-    valLabelCount = 0;
-    testLabelCount = 0;
+    trainLabels = cell(total_train, 1);
+    valLabels = cell(total_val, 1);
+    testLabels = cell(total_test, 1);
     
-    % Process each gesture class and split the data
-    for c = 1:length(gesture_classes)
-        class_name = gesture_classes{c};
-        file_indices = gesture_class_map(class_name);
-        num_class_files = length(file_indices);
-        
-        % Shuffle the file indices
-        file_indices = file_indices(randperm(num_class_files));
-        
-        % Calculate split counts
-        num_train = round((train_ratio / 10) * num_class_files);
-        num_val = round((val_ratio / 10) * num_class_files);
+    trainParticipants = cell(total_train, 1);
+    valParticipants = cell(total_val, 1);
+    testParticipants = cell(total_test, 1);
+    
+    trainFilenames = cell(total_train, 1);
+    valFilenames = cell(total_val, 1);
+    testFilenames = cell(total_test, 1);
+    
+    % =====================================================================
+    % Process files for each split
+    % =====================================================================
+    [trainData, trainLabels, trainParticipants, trainFilenames] = ...
+        process_files(gesture_folder, annotation_folder, train_indices, ...
+        gesture_files, file_classes, file_ids, file_participants, ...
+        window_size, selected_joints, mode, trainData, trainLabels, ...
+        trainParticipants, trainFilenames, 'train');
+    
+    [valData, valLabels, valParticipants, valFilenames] = ...
+        process_files(gesture_folder, annotation_folder, val_indices, ...
+        gesture_files, file_classes, file_ids, file_participants, ...
+        window_size, selected_joints, mode, valData, valLabels, ...
+        valParticipants, valFilenames, 'val');
+    
+    [testData, testLabels, testParticipants, testFilenames] = ...
+        process_files(gesture_folder, annotation_folder, test_indices, ...
+        gesture_files, file_classes, file_ids, file_participants, ...
+        window_size, selected_joints, mode, testData, testLabels, ...
+        testParticipants, testFilenames, 'test');
 
-        % Split the indices
-        train_files = file_indices(1:num_train);
-        val_files = file_indices(num_train + 1:num_train + num_val);
-        test_files = file_indices(num_train + num_val + 1:end);
-
-        % Process files for train, validation, and test
-        [trainData, trainLabelCount, trainLabels] = process_files(gesture_folder, annotation_folder, train_files, gesture_files, class_name, window_size, selected_joints, mode, trainData, trainLabelCount, trainLabels, 'train');
-        [valData, valLabelCount, valLabels] = process_files(gesture_folder, annotation_folder, val_files, gesture_files, class_name, window_size, selected_joints, mode, valData, valLabelCount, valLabels, 'val');
-        [testData, testLabelCount, testLabels] = process_files(gesture_folder, annotation_folder, test_files, gesture_files, class_name, window_size, selected_joints, mode, testData, testLabelCount, testLabels, 'test');
-    end
-
-    % Save the data and labels
+    % Save original labels (before categorical conversion)
     save(fullfile(data_output_dir, 'trainLabels_og.mat'), 'trainLabels');
     save(fullfile(data_output_dir, 'valLabels_og.mat'), 'valLabels');
     save(fullfile(data_output_dir, 'testLabels_og.mat'), 'testLabels');
+
+    % Save participant and filename traceability info
+    save(fullfile(data_output_dir, 'trainParticipants.mat'), 'trainParticipants');
+    save(fullfile(data_output_dir, 'valParticipants.mat'), 'valParticipants');
+    save(fullfile(data_output_dir, 'testParticipants.mat'), 'testParticipants');
+    save(fullfile(data_output_dir, 'trainFilenames.mat'), 'trainFilenames');
+    save(fullfile(data_output_dir, 'valFilenames.mat'), 'valFilenames');
+    save(fullfile(data_output_dir, 'testFilenames.mat'), 'testFilenames');
 
     % Calculate mean and standard deviation of the training data
     meanSkeleton = mean(trainData(:));
@@ -124,7 +252,7 @@ function processDataset(selected_joints_option, data_augmentation_methods, train
     fprintf('Mean is %d\n', meanSkeleton);
     fprintf('Std is %d\n', stdSkeleton);
     
-    % Normalize the training data
+    % Normalize the data using training statistics
     trainData_n = (trainData - meanSkeleton) / stdSkeleton;
     valData_n = (valData - meanSkeleton) / stdSkeleton;
     testData_n = (testData - meanSkeleton) / stdSkeleton; 
@@ -134,7 +262,7 @@ function processDataset(selected_joints_option, data_augmentation_methods, train
     valLabels = categorical(valLabels);
     testLabels = categorical(testLabels);
     
-    % Save the data and labels
+    % Save the normalised data and categorical labels
     save(fullfile(data_output_dir, 'trainData.mat'), 'trainData_n');
     save(fullfile(data_output_dir, 'trainLabels.mat'), 'trainLabels');
     save(fullfile(data_output_dir, 'valData.mat'), 'valData_n');
@@ -144,166 +272,149 @@ function processDataset(selected_joints_option, data_augmentation_methods, train
 
     numClasses = size(unique(trainLabels), 1);
 
-    save_customisation_to_json(selected_joints_option, mode, data_augmentation_methods, window_size, train_ratio, val_ratio, numClasses, project_dir, dataset_name);
+    save_customisation_to_json(selected_joints_option, mode, data_augmentation_methods, ...
+        window_size, train_ratio, val_ratio, numClasses, project_dir, dataset_name, ...
+        meanSkeleton, stdSkeleton);
 
     fprintf('Data preprocessing complete.\n');
 end
 
-% Function to process files and add them to the corresponding dataset
-function [dataset, labelCount, labels] = process_files(gesture_folder, annotation_folder, file_indices, gesture_files, gesture_class, window_size, selected_joints, mode, dataset, labelCount, labels, type)
-    % Define parent-child relationships for joints
-    parent_joints = [-1, 0, 1, 2, 3, 0, 5, 6, 7, 8, 0, 10, 11, 12, 13, 0, 15, 16, 17, 18, 0, 20, 21, 22, 23];
-    index_offset = 7;  % Joint data offsets (for 3 position, 4 orientation)
-    lh_offset = 1;     % Left hand starts at offset 1
-    rh_offset = 25 * 7 + 1;  % Right hand starts after left hand's joints
 
+% =========================================================================
+% Split count computation with test-first priority
+% =========================================================================
+function [n_test, n_val, n_train] = compute_split_counts(n, test_frac, val_frac)
+    if n == 0
+        n_test = 0; n_val = 0; n_train = 0;
+        return;
+    end
+    if n == 1
+        n_test = 1; n_val = 0; n_train = 0;
+        return;
+    end
+    if n == 2
+        n_test = 1; n_val = 1; n_train = 0;
+        return;
+    end
+    
+    n_test = max(1, round(n * test_frac));
+    n_val = max(1, round(n * val_frac));
+    
+    while n_test + n_val >= n && n_val > 1
+        n_val = n_val - 1;
+    end
+    while n_test + n_val >= n && n_test > 1
+        n_test = n_test - 1;
+    end
+    
+    n_train = n - n_test - n_val;
+end
+
+
+% =========================================================================
+% Process files and add them to the corresponding dataset
+% =========================================================================
+function [dataset, labels, participants, filenames] = process_files( ...
+    gesture_folder, annotation_folder, file_indices, gesture_files, ...
+    file_classes, file_ids, file_participants, ...
+    window_size, selected_joints, mode, ...
+    dataset, labels, participants, filenames, type)
+    
+    parent_joints = [-1, 0, 1, 2, 3, 0, 5, 6, 7, 8, 0, 10, 11, 12, 13, 0, 15, 16, 17, 18, 0, 20, 21, 22, 23];
+    fingertip_joints = [4, 9, 14, 19, 24];
+    index_offset = 7;
+    lh_offset = 1;
+    rh_offset = 25 * 7 + 1;
+
+    count = 0;
+    
     for i = 1:length(file_indices)
-        index = file_indices(i);
-        gesture_file = gesture_files(index).name;
+        idx = file_indices(i);
+        gesture_file = gesture_files(idx).name;
+        gesture_class = file_classes{idx};
+        id_number = file_ids{idx};
+        participant = file_participants{idx};
+        
         gesture_data = readmatrix(fullfile(gesture_folder, gesture_file));
         
-        % Extract the id_number from the filename
-        [~, name, ~] = fileparts(gesture_file);
-        parts = split(name, '-');
-        id_number = parts{4};
-        
-        % Load the corresponding annotation file
         annotation_file = fullfile(annotation_folder, [gesture_class, '.csv']);
         if ~isfile(annotation_file)
+            fprintf('Warning: annotation file not found for class %s, skipping\n', gesture_class);
             continue;
         end
         annotations = readmatrix(annotation_file);
         
-        % Find the matching annotation rows by id_number
         row = annotations(annotations(:,1) == str2double(id_number), :);
-
-        if size(row, 2) == 3
-            % First kind of annotation
+        
+        if isempty(row)
+            fprintf('Warning: no annotation found for id %s in class %s, using full sequence\n', ...
+                id_number, gesture_class);
+            start_frame = 1;
+            end_frame = size(gesture_data, 1);
+            if end_frame - start_frame + 1 < window_size
+                frames = [gesture_data(start_frame:end_frame, :); ...
+                          repmat(gesture_data(end_frame, :), ...
+                          window_size - (end_frame - start_frame + 1), 1)];
+            else
+                mid = floor((start_frame + end_frame) / 2);
+                s = max(1, mid - floor(window_size/2));
+                frames = gesture_data(s:s+window_size-1, :);
+            end
+        elseif size(row, 2) == 3
             middle_frame = row(3);
             start_frame = max(1, middle_frame - floor(window_size / 2));
             end_frame = min(size(gesture_data, 1), start_frame + window_size - 1);
             
             if end_frame - start_frame + 1 < window_size
                 if start_frame == 1
-                    frames = [repmat(gesture_data(start_frame, :), window_size - (end_frame - start_frame + 1), 1); gesture_data(start_frame:end_frame, :)];
+                    frames = [repmat(gesture_data(start_frame, :), ...
+                              window_size - (end_frame - start_frame + 1), 1); ...
+                              gesture_data(start_frame:end_frame, :)];
                 else
-                    frames = [gesture_data(start_frame:end_frame, :); repmat(gesture_data(end_frame, :), window_size - (end_frame - start_frame + 1), 1)];
+                    frames = [gesture_data(start_frame:end_frame, :); ...
+                              repmat(gesture_data(end_frame, :), ...
+                              window_size - (end_frame - start_frame + 1), 1)];
                 end
             else
                 frames = gesture_data(start_frame:end_frame, :);
             end
 
         elseif size(row, 2) > 3
-            % Second kind of annotation
             start_frame = max(1, row(3));
             end_frame = row(4);
             if end_frame - start_frame + 1 < window_size
-                frames = [repmat(gesture_data(start_frame, :), window_size - (end_frame - start_frame + 1), 1); gesture_data(start_frame:end_frame, :)];
+                frames = [repmat(gesture_data(start_frame, :), ...
+                          window_size - (end_frame - start_frame + 1), 1); ...
+                          gesture_data(start_frame:end_frame, :)];
             else
-                frames = gesture_data(start_frame:min(start_frame + window_size - 1, size(gesture_data, 1)), :);
+                frames = gesture_data(start_frame:min(start_frame + window_size - 1, ...
+                         size(gesture_data, 1)), :);
             end
         end
         
-        % Convert to local coordinates
-        frames_local = convert_to_local(frames, window_size, lh_offset, rh_offset, index_offset, parent_joints);
-
-        % Process the frames based on the selected mode (Position, Rotation, or Both)
+        frames_local = convert_to_local(frames, window_size, lh_offset, rh_offset, ...
+                                        index_offset, parent_joints, fingertip_joints);
         processed_frames = process_frames_based_on_mode(frames_local, selected_joints, mode);
 
-        fprintf('Processed %d files of the %s class for %s\n', i, gesture_class, type);
+        fprintf('Processed %d/%d files of the %s class for %s\n', ...
+            i, length(file_indices), gesture_class, type);
         
-        % Add the processed frames to the dataset
-        labelCount = labelCount + 1;
-        dataset(:,:,labelCount) = processed_frames;
-        labels{labelCount} = gesture_class;
+        count = count + 1;
+        dataset(:,:,count) = processed_frames;
+        labels{count} = gesture_class;
+        participants{count} = participant;
+        filenames{count} = gesture_file;
     end
 end
 
-% Function to calculate frame size based on selected mode and joints
-function frame_size = calculate_frame_size(selected_joints, mode)
-    num_joints = length(selected_joints);
-    if mode == 0
-        frame_size = 2 * 3 * num_joints;  % Position only for both hands
-    elseif mode == 1
-        frame_size = 2 * 4 * num_joints;  % Rotation only for both hands
-    else
-        frame_size = 2 * 7 * num_joints;  % Position + Rotation for both hands
-    end
-end
 
-% Function to process frames based on selected mode
-function processed_frames = process_frames_based_on_mode(frames_local, selected_joints, mode)
-    % Pre-determine the number of columns to allocate based on mode and selected joints
-    num_joints = length(selected_joints);
+% =========================================================================
+% Local coordinate conversion
+% =========================================================================
+function data_buffer_local = convert_to_local(data_buffer, n_frames, ...
+    lh_offset, rh_offset, index_offset, parent_joints, fingertip_joints)
     
-    % Calculate the number of columns for the output
-    if mode == 0
-        % Position only
-        num_columns = 2 * 3 * num_joints;  % 3 columns per joint per hand (left + right)
-    elseif mode == 1
-        % Rotation only
-        num_columns = 2 * 4 * num_joints;  % 4 columns per joint per hand (left + right)
-    else
-        % Position + Rotation
-        num_columns = 2 * 7 * num_joints;  % 7 columns per joint per hand (left + right)
-    end
-    
-    % Preallocate processed_frames based on the number of frames (rows) and calculated columns
-    num_frames = size(frames_local, 1);
-    processed_frames = zeros(num_frames, num_columns);
-    
-    col_idx = 1;
-    
-    % First process left hand
-    for joint = selected_joints
-        % Left hand
-        lh_position_indices = joint * 7 + (1:3);  % Extract position indices for left hand
-        lh_rotation_indices = joint * 7 + (4:7);  % Extract rotation indices for left hand
-        
-        if mode == 0
-            % Extract position data only for left hand
-            processed_frames(:, col_idx:col_idx+2) = frames_local(:, lh_position_indices);
-            col_idx = col_idx + 3;  % Move to the next column set
-        elseif mode == 1
-            % Extract rotation data only for left hand
-            processed_frames(:, col_idx:col_idx+3) = frames_local(:, lh_rotation_indices);
-            col_idx = col_idx + 4;  % Move to the next column set
-        else
-            % Extract both position and rotation data for left hand
-            processed_frames(:, col_idx:col_idx+2) = frames_local(:, lh_position_indices);
-            processed_frames(:, col_idx+3:col_idx+6) = frames_local(:, lh_rotation_indices);
-            col_idx = col_idx + 7;  % Move to the next column set
-        end
-    end
-    
-    % Then process right hand
-    for joint = selected_joints
-        % Right hand
-        rh_position_indices = 25 * 7 + joint * 7 + (1:3);  % Extract position indices for right hand
-        rh_rotation_indices = 25 * 7 + joint * 7 + (4:7);  % Extract rotation indices for right hand
-        
-        if mode == 0
-            % Extract position data only for right hand
-            processed_frames(:, col_idx:col_idx+2) = frames_local(:, rh_position_indices);
-            col_idx = col_idx + 3;  % Move to the next column set
-        elseif mode == 1
-            % Extract rotation data only for right hand
-            processed_frames(:, col_idx:col_idx+3) = frames_local(:, rh_rotation_indices);
-            col_idx = col_idx + 4;  % Move to the next column set
-        else
-            % Extract both position and rotation data for right hand
-            processed_frames(:, col_idx:col_idx+2) = frames_local(:, rh_position_indices);
-            processed_frames(:, col_idx+3:col_idx+6) = frames_local(:, rh_rotation_indices);
-            col_idx = col_idx + 7;  % Move to the next column set
-        end
-    end
-end
-
-% Function to convert to local coordinates
-function data_buffer_local = convert_to_local(data_buffer, n_frames, lh_offset, rh_offset, index_offset, parent_joints)
     data_buffer_local = data_buffer;
-
-    % Extract wrist position
     lh_wrist_pos = data_buffer(:, lh_offset + (0:2));
     rh_wrist_pos = data_buffer(:, rh_offset + (0:2));
 
@@ -311,7 +422,6 @@ function data_buffer_local = convert_to_local(data_buffer, n_frames, lh_offset, 
         for joint = 0:24
             parent_joint = parent_joints(joint + 1);
             
-            % Convert position to local coordinates (relative to wrist)
             lh_global_pos = data_buffer(frame, lh_offset + index_offset * joint + (0:2));
             rh_global_pos = data_buffer(frame, rh_offset + index_offset * joint + (0:2));
             lh_local_pos = lh_global_pos - lh_wrist_pos(frame, :);
@@ -320,38 +430,115 @@ function data_buffer_local = convert_to_local(data_buffer, n_frames, lh_offset, 
             data_buffer_local(frame, rh_offset + index_offset * joint + (0:2)) = rh_local_pos;
 
             if parent_joint == -1
-                % Root joint (wrist), no quaternion transformation needed
                 continue;
+            elseif ismember(joint, fingertip_joints)
+                lh_quat_start = lh_offset + index_offset * joint;
+                rh_quat_start = rh_offset + index_offset * joint;
+                data_buffer_local(frame, lh_quat_start + (3:5)) = [0, 0, 0];
+                data_buffer_local(frame, lh_quat_start + 6) = 1;
+                data_buffer_local(frame, rh_quat_start + (3:5)) = [0, 0, 0];
+                data_buffer_local(frame, rh_quat_start + 6) = 1;
+            else
+                lh_parent_quat = data_buffer(frame, lh_offset + index_offset * parent_joint + [6, 3:5]);
+                rh_parent_quat = data_buffer(frame, rh_offset + index_offset * parent_joint + [6, 3:5]);
+                lh_global_quat = data_buffer(frame, lh_offset + index_offset * joint + [6, 3:5]);
+                rh_global_quat = data_buffer(frame, rh_offset + index_offset * joint + [6, 3:5]);
+                lh_parent_quat_inv = quatconj(lh_parent_quat);
+                rh_parent_quat_inv = quatconj(rh_parent_quat);
+                lh_local_quat = quatmultiply(lh_parent_quat_inv, lh_global_quat);
+                rh_local_quat = quatmultiply(rh_parent_quat_inv, rh_global_quat);
+                data_buffer_local(frame, lh_offset + index_offset * joint + [6, 3:5]) = lh_local_quat;
+                data_buffer_local(frame, rh_offset + index_offset * joint + [6, 3:5]) = rh_local_quat;
             end
+        end
+    end
+    
+    for frame = 1:n_frames
+        data_buffer_local(frame, lh_offset + (0:2)) = [0, 0, 0];
+        data_buffer_local(frame, rh_offset + (0:2)) = [0, 0, 0];
+    end
+end
 
-            % Extract parent quaternion with correct order
-            lh_parent_quat = data_buffer(frame, lh_offset + index_offset * parent_joint + [6, 3:5]);
-            rh_parent_quat = data_buffer(frame, rh_offset + index_offset * parent_joint + [6, 3:5]);
-            
-            % Convert quaternion to local coordinates (relative to parent joint)
-            lh_global_quat = data_buffer(frame, lh_offset + index_offset * joint + [6, 3:5]);
-            rh_global_quat = data_buffer(frame, rh_offset + index_offset * joint + [6, 3:5]);
-            lh_parent_quat_inv = quatconj(lh_parent_quat);
-            rh_parent_quat_inv = quatconj(rh_parent_quat);   
-            lh_local_quat = quatmultiply(lh_parent_quat_inv, lh_global_quat);
-            rh_local_quat = quatmultiply(rh_parent_quat_inv, rh_global_quat);
-            data_buffer_local(frame, lh_offset + index_offset * joint + [6, 3:5]) = lh_local_quat;
-            data_buffer_local(frame, rh_offset + index_offset * joint + [6, 3:5]) = rh_local_quat;
+
+% =========================================================================
+% Calculate frame size based on selected mode and joints
+% =========================================================================
+function frame_size = calculate_frame_size(selected_joints, mode)
+    num_joints = length(selected_joints);
+    if mode == 0
+        frame_size = 2 * 3 * num_joints;
+    elseif mode == 1
+        frame_size = 2 * 4 * num_joints;
+    else
+        frame_size = 2 * 7 * num_joints;
+    end
+end
+
+
+% =========================================================================
+% Process frames based on selected mode
+% =========================================================================
+function processed_frames = process_frames_based_on_mode(frames_local, selected_joints, mode)
+    num_joints = length(selected_joints);
+    
+    if mode == 0
+        num_columns = 2 * 3 * num_joints;
+    elseif mode == 1
+        num_columns = 2 * 4 * num_joints;
+    else
+        num_columns = 2 * 7 * num_joints;
+    end
+    
+    num_frames = size(frames_local, 1);
+    processed_frames = zeros(num_frames, num_columns);
+    col_idx = 1;
+    
+    for joint = selected_joints
+        lh_position_indices = joint * 7 + (1:3);
+        lh_rotation_indices = joint * 7 + (4:7);
+        if mode == 0
+            processed_frames(:, col_idx:col_idx+2) = frames_local(:, lh_position_indices);
+            col_idx = col_idx + 3;
+        elseif mode == 1
+            processed_frames(:, col_idx:col_idx+3) = frames_local(:, lh_rotation_indices);
+            col_idx = col_idx + 4;
+        else
+            processed_frames(:, col_idx:col_idx+2) = frames_local(:, lh_position_indices);
+            processed_frames(:, col_idx+3:col_idx+6) = frames_local(:, lh_rotation_indices);
+            col_idx = col_idx + 7;
+        end
+    end
+    
+    for joint = selected_joints
+        rh_position_indices = 25 * 7 + joint * 7 + (1:3);
+        rh_rotation_indices = 25 * 7 + joint * 7 + (4:7);
+        if mode == 0
+            processed_frames(:, col_idx:col_idx+2) = frames_local(:, rh_position_indices);
+            col_idx = col_idx + 3;
+        elseif mode == 1
+            processed_frames(:, col_idx:col_idx+3) = frames_local(:, rh_rotation_indices);
+            col_idx = col_idx + 4;
+        else
+            processed_frames(:, col_idx:col_idx+2) = frames_local(:, rh_position_indices);
+            processed_frames(:, col_idx+3:col_idx+6) = frames_local(:, rh_rotation_indices);
+            col_idx = col_idx + 7;
         end
     end
 end
 
-function save_customisation_to_json(selected_joints_option, mode, data_augmentation_methods, window_size, train_ratio, val_ratio, numClasses, project_dir, dataset_name)
-    % Create a struct to hold all the details
-    customisation_details = struct();
 
+% =========================================================================
+% Save customisation details to JSON
+% =========================================================================
+function save_customisation_to_json(selected_joints_option, mode, data_augmentation_methods, ...
+    window_size, train_ratio, val_ratio, numClasses, project_dir, dataset_name, ...
+    meanSkeleton, stdSkeleton)
+    
+    customisation_details = struct();
     customisation_details.dataset_name = dataset_name;
     customisation_details.dataset_directory = fullfile(project_dir, 'dataset', dataset_name);
-    
-    % Store the joint selection option and the actual selected joints
     customisation_details.joint_selection_option = selected_joints_option;
     
-    % Store position and rotation selection
     if mode == 0
         customisation_details.selection_mode = 'Position only';
     elseif mode == 1
@@ -360,27 +547,27 @@ function save_customisation_to_json(selected_joints_option, mode, data_augmentat
         customisation_details.selection_mode = 'Both';
     end
     
-    % Store the data augmentation methods
-    customisation_details.data_augmentation_methods = data_augmentation_methods;
+    if strcmp(data_augmentation_methods, 'Within Participant')
+        customisation_details.split_method = 'within-participant';
+    elseif strcmp(data_augmentation_methods, 'Across Participant')
+        customisation_details.split_method = 'across-participant';
+    else
+        customisation_details.split_method = data_augmentation_methods;
+    end
     
-    % Store the window size
     customisation_details.window_size = window_size;
-    
-    % Store the train, validation, and test ratios
     customisation_details.train_ratio = train_ratio;
     customisation_details.val_ratio = val_ratio;
     customisation_details.test_ratio = 10 - train_ratio - val_ratio;
-
     customisation_details.numClasses = numClasses;
+    customisation_details.meanSkeleton = meanSkeleton;
+    customisation_details.stdSkeleton = stdSkeleton;
     
-    % Convert the struct to JSON format
     json_str = jsonencode(customisation_details);
     
-    % Define the output JSON file path
     jsonFileName = 'dataset_customisation.json';
     json_file_path = fullfile(customisation_details.dataset_directory, jsonFileName);
     
-    % Write the JSON string to the file
     fid = fopen(json_file_path, 'w');
     if fid == -1
         error('Cannot create JSON file: %s', json_file_path);
@@ -388,51 +575,35 @@ function save_customisation_to_json(selected_joints_option, mode, data_augmentat
     fwrite(fid, json_str, 'char');
     fclose(fid);
     
-    fprintf('customisation details saved to: %s\n', json_file_path);
+    fprintf('Customisation details saved to: %s\n', json_file_path);
     
-    % Define the path to the project.json file
     project_description_dir = fullfile(project_dir, 'project.json');
     
-    % Load the existing project information from the JSON file
     if isfile(project_description_dir)
-        % Read the existing JSON file content
         fid = fopen(project_description_dir, 'r');
         rawJsonText = fread(fid, '*char')';
         fclose(fid);
-        
-        % Decode the JSON text into a MATLAB structure
         projectInfo = jsondecode(rawJsonText);
     else
-        % If the file does not exist, initialize an empty structure
         projectInfo = struct();
     end
     
-    % Ensure the DataPreprocessing field exists and is a structure
     if ~isfield(projectInfo, 'DataPreprocessing') || ~isstruct(projectInfo.DataPreprocessing)
         projectInfo.DataPreprocessing = struct();
     end
     
-    % Ensure the dataset_name field exists and is a cell array
     if ~isfield(projectInfo.DataPreprocessing, 'dataset_name') || ~iscell(projectInfo.DataPreprocessing.dataset_name)
         projectInfo.DataPreprocessing.dataset_name = {};
     end
     
-    % Define the new dataset name
     newDatasetName = dataset_name;
-    
-    % Check if the new dataset name already exists in the dataset_name list
     if ~ismember(newDatasetName, projectInfo.DataPreprocessing.dataset_name)
-        % If it doesn't exist, add it to the list
         projectInfo.DataPreprocessing.dataset_name{end+1} = newDatasetName;
     end
     
-    % Update the LastModifiedOn field with the current date and time
     projectInfo.LastModifiedOn = datetime('now');
     
-    % Encode the modified project information as JSON
     jsonText = jsonencode(projectInfo);
-    
-    % Write the modified JSON back to the file
     fid = fopen(project_description_dir, 'w');
     fwrite(fid, jsonText, 'char');
     fclose(fid);
