@@ -19,7 +19,7 @@ The system has three parts:
   authoring and capture control. Define gestures, record demonstrations,
   build trials, register participants, and get each participant's capture
   link.
-- [GestureLogger web platform](https://github.com/BYGGG/GestureLogger) — the
+- [GestureLogger_Web_Platform](https://github.com/BYGGG/GestureLogger_Web_Platform) — the
   web server. Hosts the WebXR capture pages (`frontend/`), the API
   (`backend/`), the manager portal (`portal/`), and the ONNX inference page
   (`deploy/`). It shares a name with the desktop app but is a different repo.
@@ -88,7 +88,7 @@ the `.onnx` through the portal → the `deploy/` page runs it live.
   the model), use `model_conversion.py`:
 
 - Upload the `.onnx` model through the
-  [GestureLogger web platform](https://github.com/BYGGG/GestureLogger)
+  [GestureLogger_Web_Platform](https://github.com/BYGGG/GestureLogger_Web_Platform)
   portal. The platform's `deploy/` page loads it and runs inference live in
   the headset.
 
@@ -98,7 +98,7 @@ the `.onnx` through the portal → the `deploy/` page runs it live.
 1. **Local Deployment**
 - WebXR requires HTTPS, so running the web platform locally may need manual
   certificate setup. See the
-  [web platform repo](https://github.com/BYGGG/GestureLogger).
+  [web platform repo](https://github.com/BYGGG/GestureLogger_Web_Platform).
 
 2. **Export to ONNX**  
 - The conversion from the attention layer to ONNX must be done manually using `model_conversion.py`.
