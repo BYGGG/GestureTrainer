@@ -92,7 +92,7 @@ the `.onnx` through the portal → the `deploy/` page runs it live.
   portal. The platform's `deploy/` page loads it and runs inference live in
   the headset.
 
-![image](https://github.com/user-attachments/assets/75017498-6f18-4f86-a547-8160c966fac2)
+<img width="800" height="600" alt="Scissors" src="https://github.com/user-attachments/assets/85d3de7d-8dd2-4808-abcc-57343be9d067" />
 
 ## Known Issues
 1. **Local Deployment**
